@@ -1,3 +1,4 @@
+import os
 import asyncio
 import random
 import sqlite3
@@ -10,8 +11,11 @@ from aiogram.client.default import DefaultBotProperties
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 # ================== CONFIG ==================
-TOKEN = "8566314962:AAGvae42Q29y2P8SuOQsC1dJYpbaROrN5Y0"
+TOKEN = os.getenv("TOKEN")  # SECURE
 ATTEMPTS = 6
+
+if not TOKEN:
+    raise RuntimeError("TOKEN not found. Add it in Railway variables.")
 # ============================================
 
 bot = Bot(
@@ -48,13 +52,11 @@ def check_guess(guess, word):
     result = ["⬜"] * 5
     word_list = list(word)
 
-    # Green
     for i in range(5):
         if guess[i] == word[i]:
             result[i] = "🟩"
             word_list[i] = None
 
-    # Yellow
     for i in range(5):
         if result[i] == "⬜" and guess[i] in word_list:
             result[i] = "🟨"
@@ -93,21 +95,20 @@ def save_score(user_id, username, points):
     conn.commit()
     return True
 
-# ================== WORDLE COMMAND ==================
+# ================== WORDLE ==================
 @dp.message(Command("wordle"))
 async def wordle(msg: types.Message):
     if msg.chat.type == "private":
-        await msg.reply("❌ This game works only in groups.")
+        await msg.reply("❌ Works only in groups.")
         return
 
     user_id = msg.from_user.id
     username = msg.from_user.username or msg.from_user.first_name
     parts = msg.text.split()
 
-    # START GAME
     if len(parts) == 1:
         if user_id in sessions:
-            await msg.reply("⚠️ You already have an active game today.")
+            await msg.reply("⚠️ You already started.")
             return
 
         sessions[user_id] = {
@@ -119,9 +120,8 @@ async def wordle(msg: types.Message):
         await msg.reply("🎮 Wordle started!\nGuess with:\n/wordle apple")
         return
 
-    # GUESS
     if user_id not in sessions:
-        await msg.reply("Start a game first using /wordle")
+        await msg.reply("Start game first using /wordle")
         return
 
     guess = parts[1].lower()
@@ -132,21 +132,18 @@ async def wordle(msg: types.Message):
 
     session = sessions[user_id]
     session["attempts"] += 1
-
     feedback = check_guess(guess, session["word"])
     session["history"].append((guess, feedback))
 
     attempts_left = ATTEMPTS - session["attempts"]
     board = format_board(session["history"])
 
-    # WIN
     if guess == session["word"]:
         save_score(user_id, username, session["attempts"])
         del sessions[user_id]
         await msg.reply(f"🎉 @{username} WINS!\n\n{board}")
         return
 
-    # LOSE
     if session["attempts"] >= ATTEMPTS:
         save_score(user_id, username, 10)
         answer = session["word"].upper()
@@ -154,10 +151,7 @@ async def wordle(msg: types.Message):
         await msg.reply(f"💀 Game Over!\nWord was: {answer}\n\n{board}")
         return
 
-    # CONTINUE
-    await msg.reply(
-        f"👤 @{username}\n\n{board}Attempts left: {attempts_left}"
-    )
+    await msg.reply(f"👤 @{username}\n\n{board}Attempts left: {attempts_left}")
 
 # ================== LEADERBOARD ==================
 @dp.message(Command("leaderboard"))
@@ -165,25 +159,21 @@ async def leaderboard(msg: types.Message):
     c.execute("SELECT username, points FROM scores ORDER BY points ASC LIMIT 10")
     rows = c.fetchall()
 
-    if not rows:
-        await msg.reply("No scores yet.")
-        return
-
-    text = "🏆 WEEKLY LEADERBOARD\n(Lower points = better)\n\n"
+    text = "🏆 LEADERBOARD\n\n"
     for i, (name, pts) in enumerate(rows, 1):
         text += f"{i}. {name} — {pts} pts\n"
 
     await msg.reply(text)
 
-# ================== WEEKLY RESET ==================
+# ================== RESET ==================
 async def weekly_reset():
     c.execute("DELETE FROM scores")
     conn.commit()
 
-scheduler = AsyncIOScheduler(timezone=pytz.timezone("Europe/London"))
-scheduler.add_job(weekly_reset, trigger="cron", day_of_week="sun", hour=0)
+scheduler = AsyncIOScheduler(timezone=pytz.utc)
+scheduler.add_job(weekly_reset, "cron", day_of_week="sun", hour=0)
 
-# ================== START BOT ==================
+# ================== START ==================
 async def main():
     scheduler.start()
     await dp.start_polling(bot)
